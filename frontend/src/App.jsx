@@ -4,6 +4,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./App.css";
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
 const LANGUAGE_OPTIONS = [
   { name: "Java", extension: "java", fence: "java" },
   { name: "Python", extension: "py", fence: "python" },
@@ -290,8 +292,8 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/${endpoint}`,
-        {
+  `${API_URL}/api/${endpoint}`,
+    {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
