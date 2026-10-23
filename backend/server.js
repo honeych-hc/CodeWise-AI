@@ -6,10 +6,10 @@ const cors = require("cors");
 const Groq = require("groq-sdk");
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -39,7 +39,11 @@ const supportedLanguages = {
 };
 
 app.get("/", (req, res) => {
-  res.send("CodeWise AI Backend is running!");
+  res.json({
+    message: "CodeWise AI Backend is running!",
+    status: "ok",
+    endpoints: ["/api/review", "/api/explain"],
+  });
 });
 
 async function askGroq(prompt, language) {
@@ -48,28 +52,26 @@ async function askGroq(prompt, language) {
     messages: [
       {
         role: "system",
-        content: `
-You are CodeWise AI, an expert programming assistant.
+        content: `You are CodeWise AI, an expert programming assistant.
 
-The user's selected programming language is ${language}.
+The selected language is ${language}.
 
-STRICT RULES:
-1. Analyze the submitted code only as ${language}.
-2. All corrected code must be valid ${language} syntax.
-3. Never convert the code to Java unless Java is selected.
-4. Never use Java syntax in Python, C, C++, or JavaScript answers.
-5. Every corrected code block must use the correct Markdown language identifier.
-6. Use exactly these identifiers:
-   Java = java
-   Python = python
-   C = c
-   C++ = cpp
-   JavaScript = javascript
-7. Keep explanations beginner-friendly and use clear Markdown.
-8. Do not invent errors or claim you executed the code.
-9. Preserve the program's intended behavior.
-10. If no correction is needed, explain that instead of inventing a correction.
-`,
+Rules:
+1. Analyze code only as ${language}.
+2. Use valid ${language} syntax in all code examples.
+3. Never convert code into another language.
+4. Use the correct Markdown code identifier.
+5. Be beginner-friendly and use clear headings.
+6. Do not invent errors or claim that you executed code.
+7. Preserve the program's intended behavior.
+8. If no correction is needed, say so.
+
+Code identifiers:
+Java = java
+Python = python
+C = c
+C++ = cpp
+JavaScript = javascript`,
       },
       {
         role: "user",
@@ -95,10 +97,20 @@ function validateRequest(req, res) {
     return null;
   }
 
-  if (!Object.prototype.hasOwnProperty.call(
-    supportedLanguages,
-    language
-  )) {
+  if (code.length > 50000) {
+    res.status(413).json({
+      message: "Code is too long. Maximum length is 50,000 characters.",
+    });
+    return null;
+  }
+
+  if (
+    typeof language !== "string" ||
+    !Object.prototype.hasOwnProperty.call(
+      supportedLanguages,
+      language
+    )
+  ) {
     res.status(400).json({
       message:
         "Unsupported language. Choose Java, Python, C, C++, or JavaScript.",
@@ -117,19 +129,13 @@ function validateRequest(req, res) {
 app.post("/api/review", async (req, res) => {
   try {
     const input = validateRequest(req, res);
-
     if (!input) return;
 
     const { code, language, languageInfo } = input;
 
-    const prompt = `
-Review the following ${language} program.
+    const prompt = `Review the following ${language} program.
 
-SELECTED LANGUAGE: ${language}
-EXPECTED CODE BLOCK IDENTIFIER: ${languageInfo.fence}
-EXPECTED FILENAME: ${languageInfo.filename}
-
-Required sections:
+Provide these sections:
 1. Code Summary
 2. Errors or Bugs
 3. Code Quality Improvements
@@ -137,30 +143,23 @@ Required sections:
 5. Corrected Code, if needed
 6. Simple Explanation
 
-CORRECTED CODE REQUIREMENTS:
-- Corrected code MUST be written in ${language}.
-- Use the exact Markdown identifier "${languageInfo.fence}" for corrected code.
-- The opening fence must be exactly:
-  \`\`\`${languageInfo.fence}
-- Do not use a Java code block unless the selected language is Java.
+The selected language is ${language}.
+Expected code identifier: ${languageInfo.fence}
+Expected filename: ${languageInfo.filename}
+
+Rules:
+- Corrected code must use ${language} syntax.
+- Use this exact Markdown identifier: ${languageInfo.fence}
 - Do not translate the program into another language.
-- Use valid ${language} syntax and conventions.
-- Preserve the original intended behavior.
-- If multiple corrections are needed, provide one complete corrected program.
-- If the code is already correct, say so and do not invent a correction.
+- Preserve the intended behavior.
+- Provide one complete corrected program if corrections are needed.
+- If the code is already correct, do not invent errors.
 
-Example of the required code block format:
-
-\`\`\`${languageInfo.fence}
-// Write corrected ${language} code here
-\`\`\`
-
-Review this code now:
+Code to review:
 
 \`\`\`${languageInfo.fence}
 ${code}
-\`\`\`
-`;
+\`\`\``;
 
     const result = await askGroq(prompt, language);
 
@@ -174,7 +173,7 @@ ${code}
 
     res.status(500).json({
       message:
-        "Code review failed. Check your Groq API key, model access, or usage limits.",
+        "Code review failed. Check the server API key, model access, or usage limits.",
     });
   }
 });
@@ -183,16 +182,11 @@ ${code}
 app.post("/api/explain", async (req, res) => {
   try {
     const input = validateRequest(req, res);
-
     if (!input) return;
 
     const { code, language, languageInfo } = input;
 
-    const prompt = `
-Explain this ${language} program to a beginner.
-
-SELECTED LANGUAGE: ${language}
-EXPECTED CODE BLOCK IDENTIFIER: ${languageInfo.fence}
+    const prompt = `Explain this ${language} program to a beginner.
 
 Include:
 1. Purpose of the program
@@ -202,19 +196,18 @@ Include:
 5. Example output, if it can be determined reliably
 
 Rules:
-- Explain the actual submitted ${language} code.
-- If showing code, use ${language} syntax.
-- Use the Markdown identifier "${languageInfo.fence}" for ${language} code blocks.
-- Never convert the program into Java or another language.
-- Do not claim that you executed the program.
-- Use simple English and clear Markdown headings.
+- Explain the submitted ${language} code.
+- Use ${language} syntax in code examples.
+- Use the Markdown identifier ${languageInfo.fence}.
+- Never translate the program into another language.
+- Do not claim you executed the program.
+- Use simple English and clear headings.
 
 Code to explain:
 
 \`\`\`${languageInfo.fence}
 ${code}
-\`\`\`
-`;
+\`\`\``;
 
     const result = await askGroq(prompt, language);
 
@@ -228,11 +221,19 @@ ${code}
 
     res.status(500).json({
       message:
-        "Code explanation failed. Check your Groq API key, model access, or usage limits.",
+        "Code explanation failed. Check the server API key, model access, or usage limits.",
     });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+// Handle unknown routes
+app.use((req, res) => {
+  res.status(404).json({
+    message: "Route not found.",
+  });
+});
+
+// Start server using Render's assigned port
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`CodeWise AI backend running on port ${PORT}`);
 });
